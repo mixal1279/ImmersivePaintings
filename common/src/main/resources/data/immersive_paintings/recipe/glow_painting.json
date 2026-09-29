@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    "immersive_paintings:painting",
+    "minecraft:glow_ink_sac"
+  ],
+  "result": {
+    "id": "immersive_paintings:glow_painting"
+  }
+}
