@@ -1,0 +1,49 @@
+# eclipse
+bin
+*.launch
+.settings
+.metadata
+.classpath
+.project
+
+# idea
+out
+*.ipr
+*.iws
+*.iml
+.idea
+
+# gradle
+build
+.gradle
+
+# other
+eclipse
+run
+runs
+backup
+
+# Files from Forge MDK
+forge*changelog.txt
+/src/main/original-java
+/mapppings
+/mcmodsrepo
+/local.properties
+
+/logs
+/.vscode
+/curseforge
+
+*.kra
+*.kra~
+*.png~
+*.blend
+*.blend1
+*.mtl
+/models/custom_model.java
+/models/custom_model_yarn.java
+/scripts/textures/
+/paintings/
+page
+
+.*
