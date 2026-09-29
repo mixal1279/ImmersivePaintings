@@ -1,0 +1,54 @@
+name: Build Immersive Paintings 26.3
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "26.3"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: gradle
+
+      - name: Set up Gradle 9.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.1.0"
+
+      - name: Verify toolchain
+        run: |
+          java -version
+          gradle --version
+
+      - name: Build
+        run: gradle build --no-daemon --stacktrace
+
+      - name: Upload Fabric JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: immersive-paintings-fabric-26.3
+          path: fabric/build/libs/*.jar
+          if-no-files-found: error
+
+      - name: Upload NeoForge JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: immersive-paintings-neoforge-26.3
+          path: neoforge/build/libs/*.jar
+          if-no-files-found: error
