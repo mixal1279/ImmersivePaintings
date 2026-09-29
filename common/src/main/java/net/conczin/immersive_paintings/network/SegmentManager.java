@@ -1,6 +1,6 @@
 package net.conczin.immersive_paintings.network;
 
-import net.conczin.immersive_paintings.Main;
+import net.conczin.immersive_paintings.ImmersivePaintings;
 import net.conczin.immersive_paintings.util.ImageManipulations;
 
 import java.awt.image.BufferedImage;
@@ -36,7 +36,7 @@ public class SegmentManager {
             try {
                 return Optional.ofNullable(ImageManipulations.decode(byteBuffer.toByteArray(), maxWidth, maxHeight));
             } catch (IOException e) {
-                Main.LOGGER.error("could not combne segmented payloads for {}", key, e);
+                ImmersivePaintings.LOGGER.error("Could not combine segmented payloads for {}", key, e);
             }
         }
 

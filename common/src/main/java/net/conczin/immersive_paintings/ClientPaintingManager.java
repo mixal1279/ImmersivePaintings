@@ -1,48 +1,55 @@
 package net.conczin.immersive_paintings;
 
+import com.mojang.blaze3d.platform.NativeImage;
 import net.conczin.immersive_paintings.client.gui.ImmersivePaintingScreen;
 import net.conczin.immersive_paintings.network.NetworkHandler;
 import net.conczin.immersive_paintings.network.payload.c2s.ImageRequestPayload;
 import net.conczin.immersive_paintings.Painting.Size;
-import net.conczin.immersive_paintings.registration.Configs;
+import net.conczin.immersive_paintings.registry.Config;
 import net.conczin.immersive_paintings.util.Cache;
 import net.conczin.immersive_paintings.util.ImageManipulations;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.*;
 
 public class ClientPaintingManager {
-    private static final Map<ResourceLocation, Painting> paintings = Collections.synchronizedMap(new HashMap<>());
+    private static final Map<Identifier, Painting> paintings = Collections.synchronizedMap(new HashMap<>());
 
-    private static final Map<ResourceLocation, Map<Size, ResourceLocation>> textureMap = Collections.synchronizedMap(new HashMap<>());
+    private static final Map<Identifier, Map<Size, Identifier>> textureMap = Collections.synchronizedMap(new HashMap<>());
 
-    private static final Map<String, Boolean> requested = Collections.synchronizedMap(new HashMap<>());
+    private static final Set<String> requested = Collections.synchronizedSet(new HashSet<>());
 
     private static boolean paintingsWereHidden;
 
-    private static final ClientCache paintingCache = new ClientCache();
+    // We don't need to cache entries in memory on the client, the value is always immediately registered as a texture
+    private static final ClientCache paintingCache = new ClientCache(0);
 
     private final static ExecutorService service = Executors.newFixedThreadPool(2);
 
-    public static Map<ResourceLocation, Painting> getPaintings() {
+    public static void newTexture(Identifier location, BufferedImage data) {
+        Minecraft.getInstance().execute(() -> {
+            NativeImage image = ImageManipulations.bufferedToNative(data);
+            DynamicTexture texture = new DynamicTexture(location::toString, image);
+            Minecraft.getInstance().getTextureManager().register(location, texture);
+        });
+    }
+
+    public static Map<Identifier, Painting> getPaintings() {
         return paintings;
     }
 
-    public static Optional<Painting> getPainting(ResourceLocation identifier) {
+    public static Optional<Painting> getPainting(Identifier identifier) {
         return Optional.ofNullable(paintings.get(identifier));
     }
 
     public static boolean arePaintingsHidden() {
-        boolean hidden = !Configs.CLIENT.loadPaintings && !Minecraft.getInstance().hasSingleplayerServer();
+        boolean hidden = !Config.CLIENT.loadPaintings && !Minecraft.getInstance().hasSingleplayerServer();
         if (hidden && !paintingsWereHidden) {
             requested.clear();
         }
@@ -51,32 +58,33 @@ public class ClientPaintingManager {
         return hidden;
     }
 
-    private static String textureIdentifier(ResourceLocation identifier, Size size) {
+    private static String textureIdentifier(Identifier identifier, Size size) {
         if (size == Size.FULL)
             return identifier.getPath();
         return identifier.getPath() + "_" + size.name().toLowerCase();
     }
 
-    private static boolean shouldCachePainting(ResourceLocation identifier) {
+    private static boolean shouldCachePainting(Identifier identifier) {
         Minecraft minecraft = Minecraft.getInstance();
-        return minecraft.hasSingleplayerServer() || Configs.CLIENT.cacheOtherPlayersPaintings ||
+        return minecraft.hasSingleplayerServer() || Config.CLIENT.cacheOtherPlayersPaintings ||
                 minecraft.player != null && getPainting(identifier).map(p -> p.authorUUID().equals(minecraft.player.getUUID())).orElse(false);
     }
 
-    private static void setImageRequest(ResourceLocation identifier, boolean thumbnail, boolean delete) {
+    private static void setImageRequest(Identifier identifier, boolean thumbnail, boolean delete) {
         String id = textureIdentifier(identifier, thumbnail ? Size.THUMBNAIL : Size.FULL);
-        if (requested.containsKey(id) == delete) {
+        if (requested.contains(id) == delete) {
             if (delete) {
                 requested.remove(id);
             } else {
-                requested.put(id, true);
+                requested.add(id);
                 NetworkHandler.Client.sendToServer(new ImageRequestPayload(identifier, thumbnail));
             }
         }
     }
 
-    private static ResourceLocation getOrNSFW(Map<Size, ResourceLocation> mapping, ResourceLocation identifier, Size size) {
-        if (Configs.CLIENT.showNSFWPaintings)
+    // By this point an image with size "size" will exist, validate any NSFW settings before returning
+    private static Identifier getOrNSFW(Map<Size, Identifier> mapping, Identifier identifier, Size size) {
+        if (Config.CLIENT.showNSFWPaintings)
             return mapping.get(size);
 
         Painting p = paintings.get(identifier);
@@ -97,14 +105,15 @@ public class ClientPaintingManager {
         return Painting.DEFAULT_IDENTIFIER;
     }
 
-    public static ResourceLocation getImageIdentifier(ResourceLocation identifier, Size size) {
+    public static Identifier getImageIdentifier(Identifier identifier, Size size) {
         if (arePaintingsHidden())
             return Painting.DEFAULT_IDENTIFIER;
+
 
         if (!paintings.containsKey(identifier))
             return Painting.DEFAULT_IDENTIFIER;
 
-        Map<Size, ResourceLocation> mapping = textureMap.get(identifier);
+        Map<Size, Identifier> mapping = textureMap.get(identifier);
 
         if (mapping == null) {
             // Attempt to get the thumbnail first so there's at least something displayed
@@ -117,9 +126,9 @@ public class ClientPaintingManager {
         } else if (!mapping.containsKey(size)) {
             boolean isThumbnail = (size == Size.THUMBNAIL);
 
+            // Request the full image and attempt to temporarily use a thumbnail identifier until it's ready
             setImageRequest(identifier, isThumbnail, false);
 
-            // Request the full image and attempt to temporarily use a thumbnail identifier until it's ready
             if (!isThumbnail && mapping.containsKey(Size.THUMBNAIL)) {
                 return getOrNSFW(mapping, identifier, Size.THUMBNAIL);
             }
@@ -130,7 +139,7 @@ public class ClientPaintingManager {
         return getOrNSFW(mapping, identifier, size);
     }
 
-    public static void registerPainting(ResourceLocation identifier, Painting painting) {
+    public static void registerPainting(Identifier identifier, Painting painting) {
         String fullId = textureIdentifier(identifier, Size.FULL);
         String thumbId = textureIdentifier(identifier, Size.THUMBNAIL);
 
@@ -140,31 +149,30 @@ public class ClientPaintingManager {
             return;
 
         // Set that they are being processed so we don't try to reach out to the network at the same time
-        requested.put(fullId, true);
-        requested.put(thumbId, true);
+        requested.add(fullId);
+        requested.add(thumbId);
 
         // When registering a painting we need to check the user's existing cache
         // Doing this allows us to quickly load and resize any necessary cached images
         // The only two sizes that can exist on their own are FULL and THUMBNAIL, all others are generated from them
         paintingCache.get(thumbId, shouldCachePainting(identifier)).ifPresentOrElse(
-                bufferedImage -> registerThumbnail(identifier, bufferedImage, true),
-                () -> requested.remove(thumbId)
+            bufferedImage -> registerThumbnail(identifier, bufferedImage, true),
+            () -> requested.remove(thumbId)
         );
 
-
         paintingCache.get(fullId, shouldCachePainting(identifier)).ifPresentOrElse(
-                bufferedImage -> registerImage(identifier, bufferedImage, true),
-                () -> requested.remove(fullId)
+            bufferedImage -> registerImage(identifier, bufferedImage, true),
+            () -> requested.remove(fullId)
         );
     }
 
-    public static void deregisterPainting(ResourceLocation identifier) {
+    public static void deregisterPainting(Identifier identifier) {
         if (!paintings.containsKey(identifier))
             return;
 
         paintings.remove(identifier);
 
-        Map<Size, ResourceLocation> map = textureMap.remove(identifier);
+        Map<Size, Identifier> map = textureMap.remove(identifier);
         if (map != null) {
             TextureManager manager = Minecraft.getInstance().getTextureManager();
             map.forEach((size, id) -> {
@@ -174,12 +182,12 @@ public class ClientPaintingManager {
         }
     }
 
-    private static void registerImageType(ResourceLocation identifier, BufferedImage fullImage, Size size, Size realSize, final boolean alreadyCached) {
+    private static void registerImageType(Identifier identifier, BufferedImage fullImage, Size size, Size realSize, final boolean alreadyCached) {
         textureMap.putIfAbsent(identifier, new HashMap<>());
-        Map<Size, ResourceLocation> mapping = textureMap.get(identifier);
+        Map<Size, Identifier> mapping = textureMap.get(identifier);
         boolean cache = shouldCachePainting(identifier);
 
-        // Handle cases where an image is too small, and realSize == Size.HALF/QUARTER/EIGHTH but size == Size.FULL
+        // Handle cases where an image is too small, and realSize == Size.HALF/QUARTER but size == Size.FULL
         if (mapping.containsKey(size) && size != realSize) {
             mapping.put(realSize, mapping.get(size));
             return;
@@ -203,32 +211,34 @@ public class ClientPaintingManager {
                     paintingCache.set(path, target, cache);
             }
 
-            BufferedImage finalTarget = target;
+            Identifier name = ImmersivePaintings.locate(path);
             Minecraft.getInstance().execute(() -> {
-                ResourceLocation id = Minecraft.getInstance().getTextureManager().register(Main.MOD_ID + "/" + path, new DynamicTexture(ImageManipulations.bufferedToNative(finalTarget)));
-                mapping.put(realSize, id);
+                NativeImage image = ImageManipulations.bufferedToNative(target);
+                DynamicTexture texture = new DynamicTexture(name::toString, image);
+                Minecraft.getInstance().getTextureManager().register(name, texture);
+                mapping.put(realSize, name);
 
-                if (size == Size.THUMBNAIL && Minecraft.getInstance().screen instanceof ImmersivePaintingScreen screen) {
+                if (size == Size.THUMBNAIL && Minecraft.getInstance().gui.screen() instanceof ImmersivePaintingScreen screen)
                     screen.updateWidget(identifier);
-                }
             });
         });
     }
 
-    public static void registerThumbnail(ResourceLocation identifier, BufferedImage image, boolean alreadyCached) {
+    public static void registerThumbnail(Identifier identifier, BufferedImage image, boolean alreadyCached) {
         if (arePaintingsHidden()) return;
+
 
         registerImageType(identifier, image, Size.THUMBNAIL, Size.THUMBNAIL, alreadyCached);
         setImageRequest(identifier, true, true);
     }
 
-    // TODO: for datapacks, use "FULL" for all sizes that aren't thumbnail
-    // registers this textures and make it readable
-    public static void registerImage(ResourceLocation identifier, BufferedImage image, boolean alreadyCached) {
+    // TODO: for datapacks, use FULL for all sizes that aren't thumbnail
+    public static void registerImage(Identifier identifier, BufferedImage image, boolean alreadyCached) {
         if (arePaintingsHidden()) return;
 
+
         if (!paintings.containsKey(identifier) && !alreadyCached) {
-            Main.LOGGER.error("no existing painting record for identifier {}", identifier);
+            ImmersivePaintings.LOGGER.error("no existing painting record for identifier {}", identifier);
             return;
         }
 
@@ -242,19 +252,20 @@ public class ClientPaintingManager {
         int res = Math.max(painting.width(), painting.height()) * painting.resolution();
         registerImageType(identifier, image, Size.FULL, Size.FULL, alreadyCached);
 
-        Size halfSize = res / 2 < Configs.CLIENT.lodResolutionMinimum ? Size.FULL : Size.HALF;
+        Size halfSize = res / 2 < Config.CLIENT.lodResolutionMinimum ? Size.FULL : Size.HALF;
         registerImageType(identifier, image, halfSize, Size.HALF, alreadyCached);
 
-        Size quarterSize = res / 4 < Configs.CLIENT.lodResolutionMinimum ? halfSize : Size.QUARTER;
+        Size quarterSize = res / 4 < Config.CLIENT.lodResolutionMinimum ? halfSize : Size.QUARTER;
         registerImageType(identifier, image, quarterSize, Size.QUARTER, alreadyCached);
-
-        Size eighthSize = res / 8 < Configs.CLIENT.lodResolutionMinimum ? quarterSize : Size.EIGHTH;
-        registerImageType(identifier, image, eighthSize, Size.EIGHTH, alreadyCached);
 
         setImageRequest(identifier, false, true);
     }
 
     private static class ClientCache extends Cache<String, BufferedImage> {
+        public ClientCache(int maxEntries) {
+            super(maxEntries);
+        }
+
         @Override
         public String getCachePath(String key) {
             return key + ".png";
@@ -265,7 +276,7 @@ public class ClientPaintingManager {
             try {
                 return ImageManipulations.decode(bytes);
             } catch (IOException e) {
-                Main.LOGGER.error("could not read image from client cache", e);
+                ImmersivePaintings.LOGGER.error("could not read image from client cache", e);
             }
             return null;
         }
@@ -275,7 +286,7 @@ public class ClientPaintingManager {
             try {
                 return ImageManipulations.encode(image);
             } catch (IOException e) {
-                Main.LOGGER.error("could not write image to client cache", e);
+                ImmersivePaintings.LOGGER.error("could not write image to client cache", e);
             }
             return null;
         }

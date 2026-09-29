@@ -1,26 +1,21 @@
 plugins {
-    // see https://fabricmc.net/develop/ for new versions
-    id 'fabric-loom' version '1.10-SNAPSHOT' apply false
+    // see https://maven.fabricmc.net/fabric-loom/fabric-loom.gradle.plugin/maven-metadata.xml for new versions
+    id 'net.fabricmc.fabric-loom' version '1.17.21' apply false
     // see https://projects.neoforged.net/neoforged/moddevgradle for new versions
-    id 'net.neoforged.moddev' version '2.0.90' apply false
+    id 'net.neoforged.moddev' version '2.0.141' apply false
 }
 
-def getAppVersion = { ->
+String getAppVersion() {
     try {
-        def stdout = new ByteArrayOutputStream()
-        exec {
-            commandLine 'git', 'tag', '--points-at', 'HEAD'
-            standardOutput = stdout
-        }
-        def tag = stdout.toString().trim()
+        def proc = "git tag --points-at HEAD".execute()
+        def tag = proc.text.trim()
         if (tag.isEmpty()) return "0.0.1"
         return tag.split('\\+')[0]
     } catch (Exception e) {
         println "Warning: ${e.message}, is git installed?"
         return "0.0.1"
     }
-} as Object
-
+}
 
 subprojects {
     version = getAppVersion()
